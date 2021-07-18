@@ -1,5 +1,7 @@
 # flake8: noqa: F401
 
-from freqtrade.persistence.models import (LocalTrade, Order, Trade, clean_dry_run_db, cleanup_db,
+from freqtrade.persistence.models import (LocalTrade, Order, Trade, KeyValue, clean_dry_run_db, cleanup_db,
                                           init_db)
 from freqtrade.persistence.pairlock_middleware import PairLocks
+
+from freqtrade.persistence.keyvalue_middleware import KeyValues

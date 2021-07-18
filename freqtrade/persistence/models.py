@@ -2,11 +2,12 @@
 This module contains the class to persist trades into SQLite
 """
 import logging
+import json
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import (Boolean, Column, DateTime, Float, ForeignKey, Integer, String,
+from sqlalchemy import (Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text,
                         create_engine, desc, func, inspect)
 from sqlalchemy.exc import NoSuchModuleError
 from sqlalchemy.orm import Query, declarative_base, relationship, scoped_session, sessionmaker
@@ -62,6 +63,7 @@ def init_db(db_url: str, clean_open_orders: bool = False) -> None:
     Trade.query = Trade._session.query_property()
     Order.query = Trade._session.query_property()
     PairLock.query = Trade._session.query_property()
+    KeyValue.query = Trade._session.query_property()
 
     previous_tables = inspect(engine).get_table_names()
     _DECL_BASE.metadata.create_all(engine)
@@ -660,6 +662,7 @@ class Trade(_DECL_BASE, LocalTrade):
     id = Column(Integer, primary_key=True)
 
     orders = relationship("Order", order_by="Order.id", cascade="all, delete-orphan")
+    keyvalue = relationship("KeyValue", order_by="KeyValue.id", cascade="all, delete-orphan")
 
     exchange = Column(String(25), nullable=False)
     pair = Column(String(25), nullable=False, index=True)
@@ -907,3 +910,51 @@ class PairLock(_DECL_BASE):
             'reason': self.reason,
             'active': self.active,
         }
+
+
+class KeyValue(_DECL_BASE):
+    """
+    KeyValue database model
+    Keeps records of metadata as key/value store
+    for trades or global persistant values
+
+    One to many relationship with Trades:
+      - One trade can have many metadata entries
+      - One metadata entry can only be associated with one Trade
+
+    """
+    __tablename__ = 'keyvalue'
+    # Uniqueness should be ensured over pair, order_id
+    # its likely that order_id is unique per Pair on some exchanges.
+    __table_args__ = (UniqueConstraint('ft_trade_id', 'kv_key', name="_trade_id_kv_key"),)
+
+    id = Column(Integer, primary_key=True)
+    ft_trade_id = Column(Integer, ForeignKey('trades.id'), index=True, default=0)
+
+    trade = relationship("Trade", back_populates="keyvalue")
+
+    kv_key = Column(String(255), nullable=False)
+    kv_type = Column(String(25), nullable=False)
+    kv_value = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=True)
+
+    def __repr__(self):
+        create_time = self.created_at.strftime(DATETIME_PRINT_FORMAT) if self.created_at is not None else None
+        update_time = self.updated_at.strftime(DATETIME_PRINT_FORMAT) if self.updated_at is not None else None
+        return (f'KeyValue(id={self.id}, key={self.kv_key}, type={self.kv_type}, value={self.kv_value}, '
+                f'trade_id={self.ft_trade_id}, created={create_time}, updated={update_time})')
+
+    @staticmethod
+    def query_kv(key: Optional[str] = None, trade_id: Optional[int] = None) -> Query:
+        """
+        Get all keyvalues, if  trade_id is not specified
+        return will be for generic values not tied to a trade
+        :param trade_id: id of the Trade
+        """
+        key = key if key is not None else "%"
+
+        filters = [KeyValue.ft_trade_id == trade_id if trade_id is not None else 0,
+                   KeyValue.kv_key.ilike(key)]
+
+        return KeyValue.query.filter(*filters)
